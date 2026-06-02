@@ -1,0 +1,757 @@
+%% IEEE CSCN 2026 — Full Paper Draft
+%% Title: Reinforcement Learning-Based Joint Optimisation of BWP-Lite,
+%%         Wake-Up Receiver, and SSB Periodicity for 6G NR UE Power Saving
+%%
+%% Compile: pdflatex -> bibtex -> pdflatex -> pdflatex
+%% Template: IEEEtran (conference mode)
+
+\documentclass[conference]{IEEEtran}
+
+%% ----------------------------- Packages ----------------------------------- %%
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{bm}
+\usepackage{subfig}
+
+%% Hyperlinks (remove for camera-ready if IEEE requires)
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+%% ----------------------------- Macros ------------------------------------- %%
+\newcommand{\bwp}{\textsc{bwp}}
+\newcommand{\wur}{\textsc{wur}}
+\newcommand{\ssb}{\textsc{ssb}}
+\newcommand{\drx}{\textsc{drx}}
+\newcommand{\rl}{\textsc{rl}}
+\newcommand{\dqn}{\textsc{dqn}}
+\newcommand{\mdp}{\textsc{mdp}}
+\newcommand{\ee}{$\eta_{\mathrm{EE}}$}
+\newcommand{\TODO}[1]{\textcolor{red}{\textbf{[TODO: #1]}}}
+
+%% -------------------------------------------------------------------------- %%
+
+\begin{document}
+
+\title{Reinforcement Learning-Based Joint Optimisation of BWP-Lite,
+Wake-Up Receiver, and SSB Periodicity for 6G NR UE Power Saving}
+
+%% Author block — fill in before submission
+\author{
+  \IEEEauthorblockN{Author Name\textsuperscript{1},
+                    Co-Author Name\textsuperscript{2}}
+  \IEEEauthorblockA{
+    \textsuperscript{1}Department, Institution, City, Country \\
+    \textsuperscript{2}Department, Institution, City, Country \\
+    email@institution.edu
+  }
+}
+
+\maketitle
+
+%% ========================= ABSTRACT ======================================= %%
+\begin{abstract}
+The forthcoming sixth-generation (6G) New Radio (NR) standard introduces
+a suite of user equipment (UE) power-saving primitives, including
+Bandwidth Part (BWP)-lite operation, Wake-Up Receiver (\wur{}) signalling,
+and flexible Synchronisation Signal Block (\ssb{}) periodicity.
+However, the static, rule-based configurations specified in current 3GPP
+study items cannot adapt to heterogeneous traffic patterns and dynamic
+channel conditions, leaving significant energy savings unrealised.
+In this paper, we propose a Dueling Deep Q-Network (DQN) agent that
+jointly optimises the BWP switching mode, \wur{} detection threshold,
+and \ssb{} transmission period at the UE, formulated as a Markov Decision
+Process (MDP) with a reward function that captures the fundamental
+trade-off between power saving and quality-of-service (QoS).
+The \wur{} threshold selection is grounded in a statistical energy detector
+model, with miss-detection and false-alarm probabilities derived as
+functions of instantaneous channel quality.
+Simulation results against a 3GPP TR 38.901 Urban Macro channel with
+calibrated bursty traffic show that the proposed agent achieves
+\textbf{75--76\% power reduction} relative to always-on operation
+while maintaining \textbf{90--94\% throughput efficiency} and
+near-zero latency violations ($<$1\%) under pedestrian and urban
+mobility scenarios.
+This represents an \textbf{18--19 percentage-point improvement} in
+power saving over the 3GPP Rel-18 Discontinuous Reception (DRX) baseline
+with comparable QoS, and provides a direct pathway to 6G RAN
+standardisation under 3GPP Rel-21 AI/ML-native UE autonomy study items.
+\end{abstract}
+
+\begin{IEEEkeywords}
+6G NR, energy efficiency, reinforcement learning, BWP-lite, wake-up
+receiver, power saving, UE autonomy, Dueling DQN, 3GPP
+\end{IEEEkeywords}
+
+%% ========================= I. INTRODUCTION ================================ %%
+\section{Introduction}
+\label{sec:intro}
+
+Energy consumption has emerged as a first-class design objective for the
+sixth-generation (6G) wireless standard.
+The IMT-2030 framework explicitly targets a $100\times$ improvement in
+network energy efficiency relative to IMT-2020~\cite{itu_imt2030},
+and the 3GPP 6G workshop has identified UE-side energy saving as a
+critical enabler for sustainable mobile broadband reliable low-latency
+communication (MBRLLC) and multi-purpose Communications, Computing,
+Control, Localization and Sensing (3CLS) services~\cite{3gpp_6g_workshop}.
+
+Existing 5G NR power-saving mechanisms, standardised in 3GPP Releases 16
+through 18, rely on timer-based Discontinuous Reception (\drx{}) cycles,
+static Bandwidth Part (\bwp{}) configurations, and Wake-Up Signal (WUS)
+procedures.
+These mechanisms have well-known limitations: \drx{} timers are configured
+by the network without knowledge of short-term UE traffic state,
+\bwp{} switching is triggered by inactivity thresholds rather than
+predictive load estimates, and the WUS detection threshold is fixed at
+deployment, regardless of channel conditions.
+As a result, the UE either wastes power by remaining active during idle
+periods, or degrades QoS by sleeping during traffic bursts.
+
+The emerging 6G NR standard proposes three new primitives specifically
+designed to address these limitations:
+(i)~\textbf{BWP-lite}, a reduced-bandwidth operating mode that lowers
+baseband and RF chain power by up to $5\times$ relative to full
+operation~\cite{qualcomm_6g_proposals};
+(ii)~\textbf{Wake-Up Receiver (\wur{})}, a low-power secondary receiver
+($<$3~mW) that monitors for downlink activity while the main radio
+sleeps~\cite{3gpp_tr38875};
+and (iii)~\textbf{flexible \ssb{} periodicity}, allowing synchronisation
+bursts at 5, 10, 20, or 40~ms intervals to reduce decoding overhead
+during deep idle.
+However, 3GPP Rel-19/20 study items specify these primitives
+independently, with separate rule-based control loops.
+The joint optimisation of all three parameters as a function of
+instantaneous traffic load, channel quality, and buffer state has not
+been addressed.
+
+\textbf{Contributions.} This paper makes the following contributions:
+\begin{itemize}
+  \item We formulate the joint control of BWP mode, \wur{} detection
+        threshold, and \ssb{} periodicity as a 14,400-state discrete-time
+        MDP with a reward function explicitly designed to balance energy
+        efficiency and latency QoS.
+  \item We derive a statistical energy detector model for \wur{} miss-detection
+        and false-alarm probabilities as a function of channel SNR and
+        threshold level, and integrate this model directly into the RL
+        reward to penalise inappropriate threshold selection.
+  \item We train and evaluate a Dueling DQN agent with Prioritised
+        Experience Replay (PER) against a 3GPP TR 38.901 Urban Macro
+        channel model and a calibrated MMPP-2 bursty traffic source,
+        demonstrating 75--76\% power saving with $<$1\% latency violations.
+  \item We position our results against the 3GPP Rel-18 DRX baseline,
+        an always-on policy, and a random policy, providing a complete
+        performance characterisation across three UE mobility scenarios.
+\end{itemize}
+
+The rest of the paper is organised as follows.
+Section~\ref{sec:related} reviews related work.
+Section~\ref{sec:system} presents the system model.
+Section~\ref{sec:mdp} formulates the MDP.
+Section~\ref{sec:algo} describes the Dueling DQN algorithm.
+Section~\ref{sec:results} presents simulation results.
+Section~\ref{sec:conclusion} concludes.
+
+%% ========================= II. RELATED WORK =============================== %%
+\section{Related Work}
+\label{sec:related}
+
+\subsection{3GPP UE Power Saving}
+
+UE power saving in 5G NR has been standardised incrementally across
+Releases 16--18.
+Release 16 introduced C-DRX enhancements and \bwp{}-based power saving,
+whereby the UE operates on a narrow \bwp{} during low-traffic periods to
+reduce baseband power~\cite{3gpp_ts38300}.
+Release 17 introduced the Wake-Up Signal (WUS) framework, allowing
+the network to pre-signal UE activity before DRX on-durations,
+reducing unnecessary wake-ups~\cite{3gpp_tr38875}.
+Release 18 extended WUS to cross-slot scheduling and added enhanced
+\drx{} adaptation~\cite{3gpp_rel18_ps}.
+The 3GPP Rel-19 study item on 6G UE power saving (RP-251033) identifies
+BWP-lite, \wur{} hardware, and flexible \ssb{} as candidate features,
+but leaves joint control as an open problem.
+
+\subsection{Machine Learning for UE Power Saving}
+
+Several works have applied reinforcement learning to \drx{} optimisation.
+\c{C}om\c{s}a \textit{et al.}~\cite{comsa2020} proposed a Q-learning
+approach for DRX cycle adaptation in LTE, demonstrating reduced power
+consumption at the cost of increased state complexity.
+Cui \textit{et al.}~\cite{cui2022} applied Deep Q-Networks to \bwp{}
+switching in 5G NR, optimising throughput under power constraints, but
+did not model \wur{} or \ssb{} interactions.
+More recently, several works~\cite{zhang2023,lee2024} have targeted
+base station sleep mode scheduling using actor-critic methods, but the
+UE-side control problem with hardware-level \wur{} statistics has received
+limited attention.
+
+\subsection{Positioning of This Work}
+
+The key distinctions of our work are:
+(i)~\textbf{Joint optimisation} of three interdependent 6G-specific
+    primitives (BWP-lite, \wur{} threshold, \ssb{} period) in a single
+    RL agent, rather than independent control loops;
+(ii)~\textbf{Statistical \wur{} model} integrated into the reward,
+    connecting physical-layer detection theory to MAC-layer control;
+(iii)~\textbf{6G standardisation alignment}, with all parameters
+    traceable to active 3GPP Rel-19/20 study items, making results
+    directly relevant to ongoing standardisation discussions.
+
+%% ========================= III. SYSTEM MODEL ============================== %%
+\section{System Model}
+\label{sec:system}
+
+\subsection{UE Power Consumption Model}
+
+We adopt the component-level power model from 3GPP TR~38.840.
+The instantaneous UE power is decomposed as:
+\begin{equation}
+  P_{\mathrm{UE}}(t) = P_{\mathrm{PA}}(t) + P_{\mathrm{BB}}(t)
+                     + P_{\mathrm{RF}}(t) + P_{\mathrm{WUR}}(t)
+                     + P_{\mathrm{static}},
+  \label{eq:power_model}
+\end{equation}
+where each component is a function of the BWP mode indicator
+$b(t) \in \{0,1\}$ (0 = BWP-lite, 1 = full bandwidth) and WUR state
+$w(t) \in \{0,1\}$.
+
+\textbf{Power Amplifier:}
+\begin{equation}
+  P_{\mathrm{PA}}(t) = \left(1 - (1-\beta_{\mathrm{PA}}) \cdot \bar{b}(t)\right)
+                       \frac{p_{tx}}{\eta_{\mathrm{PA}}},
+  \label{eq:pa}
+\end{equation}
+where $\beta_{\mathrm{PA}} = \kappa \cdot \eta^{\mathrm{full}}/\eta^{\mathrm{lite}}
+\approx 0.16$ is the BWP-lite PA power reduction factor,
+$\kappa = 0.2$ is the bandwidth ratio, and $\bar{b}(t) = 1 - b(t)$.
+
+\textbf{Baseband:}
+\begin{equation}
+  P_{\mathrm{BB}}(t) = P_{\mathrm{BB}}^{0}
+    + \left(1 - (1-\kappa)\bar{b}(t)\right)
+      \left(P_{\mathrm{BB}}^{\mathrm{full}} - P_{\mathrm{BB}}^{0}\right),
+  \label{eq:bb}
+\end{equation}
+with static baseband floor $P_{\mathrm{BB}}^{0} = 30$~mW and full-load
+$P_{\mathrm{BB}}^{\mathrm{full}} = 180$~mW.
+
+\textbf{RF Chains:}
+For a 4T8R device, the RF chain power is:
+\begin{equation}
+  P_{\mathrm{RF}}(t) = \left(1 + (N_{\mathrm{chain}}-1) \cdot b(t)\right)
+                        P_{\mathrm{chain}},
+  \label{eq:rf}
+\end{equation}
+where $N_{\mathrm{chain}} = 4$ and $P_{\mathrm{chain}} = 52$~mW.
+In BWP-lite mode, only a single chain is active, saving 156~mW.
+
+\textbf{WUR:}
+\begin{equation}
+  P_{\mathrm{WUR}}(t) = w(t) P_{\mathrm{WUR}}^{\mathrm{rx}}
+                      + (1-w(t)) P_{\mathrm{WUR}}^{\mathrm{sleep}},
+  \label{eq:wur_power}
+\end{equation}
+with $P_{\mathrm{WUR}}^{\mathrm{rx}} = 2$~mW and
+$P_{\mathrm{WUR}}^{\mathrm{sleep}} = 0.1$~mW.
+
+The average additional power from periodic \ssb{} decoding with period
+$T_{\ssb{}} \in \{5, 10, 20, 40\}$~ms is:
+\begin{equation}
+  \bar{P}_{\mathrm{SSB}} = \frac{t_{\mathrm{SSB}}}{T_{\mathrm{SSB}}}
+                            P_{\mathrm{decode}},
+  \label{eq:ssb_power}
+\end{equation}
+where $t_{\mathrm{SSB}} = 0.14$~ms and $P_{\mathrm{decode}} = 120$~mW,
+yielding 3.36~mW at $T_{\mathrm{SSB}} = 5$~ms down to 0.42~mW at
+$T_{\mathrm{SSB}} = 40$~ms.
+
+\subsection{WUR Detection Model}
+
+The gNB transmits a Wake-Up Signal (WUS) occupying $N_{\mathrm{PRB}} = 1$
+physical resource block, modulated over a known sequence of
+$L_{\mathrm{WUS}} = 64$ symbols.
+The UE WUR correlates the received signal against the known sequence and
+applies an energy detector with threshold $\xi_\theta = \theta \cdot N_0 L_{\mathrm{WUS}}$,
+where $\theta \in \{1, 2, 3\}$ is the threshold level.
+
+Under Rayleigh fading with average SNR $\bar{\gamma}$, the
+\textbf{false alarm probability} is:
+\begin{equation}
+  P_{\mathrm{FA}}(\theta) = \frac{\Gamma(L_{\mathrm{WUS}},\, \theta L_{\mathrm{WUS}})}
+                                  {\Gamma(L_{\mathrm{WUS}})},
+  \label{eq:pfa}
+\end{equation}
+where $\Gamma(\cdot, \cdot)$ is the upper regularised incomplete gamma function.
+The threshold levels are calibrated to target $P_{\mathrm{FA}} \in \{0.15, 0.02, 0.001\}$
+for $\theta \in \{1, 2, 3\}$ respectively.
+
+The \textbf{miss-detection probability}, averaged over Rayleigh fading, is:
+\begin{equation}
+  P_{\mathrm{MD}}(\theta, \bar{\gamma}) = 1 -
+    \sum_{k=0}^{\infty} e^{-\lambda} \frac{\lambda^k}{k!}
+    \cdot \frac{\Gamma(L + k,\, \theta L)}{\Gamma(L + k)},
+  \label{eq:pmd}
+\end{equation}
+where $\lambda = L_{\mathrm{WUS}} \cdot \bar{\gamma}$ is the
+non-centrality parameter.
+Table~\ref{tab:wur} summarises $P_{\mathrm{FA}}$ and $P_{\mathrm{MD}}$
+for key SNR operating points.
+
+\begin{table}[t]
+  \centering
+  \caption{WUR Detection Performance ($L_{\mathrm{WUS}} = 64$)}
+  \label{tab:wur}
+  \begin{tabular}{ccccc}
+    \toprule
+    $\theta$ & $P_{\mathrm{FA}}$ &
+    $P_{\mathrm{MD}}^{0\,\mathrm{dB}}$ &
+    $P_{\mathrm{MD}}^{10\,\mathrm{dB}}$ &
+    $P_{\mathrm{MD}}^{20\,\mathrm{dB}}$ \\
+    \midrule
+    1 (low)  & 0.150 & 0.000 & 0.000 & 0.000 \\
+    2 (med)  & 0.020 & 0.000 & 0.000 & 0.000 \\
+    3 (high) & 0.001 & 0.002 & 0.000 & 0.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Channel Model}
+
+We adopt the 3GPP TR 38.901 Urban Macro (UMa) model at $f_c = 3.5$~GHz.
+Path loss in the NLoS case is:
+\begin{equation}
+  \mathrm{PL}_{\mathrm{NLoS}} = \max\!\left(\mathrm{PL}_{\mathrm{LoS}},\;
+    13.54 + 39.08\log_{10}(d_{\mathrm{3D}}) + 20\log_{10}(f_c)\right),
+  \label{eq:pl}
+\end{equation}
+with shadow fading $\sigma_{\mathrm{SF}} = 6$~dB.
+Small-scale fading follows a correlated Rayleigh process with temporal
+autocorrelation $R_h(\Delta t) = J_0(2\pi f_d \Delta t)$, where
+$f_d = v f_c / c$ is the maximum Doppler shift.
+The coherence time $T_c = 0.423/f_d$ ranges from 43.5~ms at 3~km/h
+to 2.2~ms at 60~km/h, motivating the three mobility scenarios evaluated.
+
+The CQI Markov transition matrix is estimated empirically from 100,000
+channel realisations, yielding a tridiagonal-dominant matrix with
+mean diagonal entry 0.89 (v = 3~km/h), 0.78 (v = 10~km/h), and
+0.44 (v = 60~km/h).
+
+\subsection{Traffic Model}
+
+UE downlink traffic follows a two-state Markov-Modulated Poisson Process
+(MMPP-2), calibrated to the 3GPP TR 36.814 mixed video-streaming and
+web-browsing reference traffic profile:
+\begin{equation}
+  \mathbf{Q}_{\mathrm{MMPP}} =
+  \begin{pmatrix} -\mu_{LH} & \mu_{LH} \\ \mu_{HL} & -\mu_{HL} \end{pmatrix},
+  \label{eq:mmpp}
+\end{equation}
+with $\lambda_L = 0.1$~Mbps, $\lambda_H = 18.75$~Mbps,
+$\mu_{LH} = 1.25$~s$^{-1}$ (mean low-load duration 800~ms), and
+$\mu_{HL} = 5.0$~s$^{-1}$ (mean high-load duration 200~ms).
+The stationary mean offered load is 2.5~Mbps with burstiness index
+$c_v^2 \approx 4.2$.
+
+%% ========================= IV. MDP FORMULATION ============================ %%
+\section{MDP Formulation}
+\label{sec:mdp}
+
+\subsection{State Space}
+
+The UE control problem is modelled as a discrete-time MDP
+$\mathcal{M} = (\mathcal{S}, \mathcal{A}, \mathcal{P}, \mathcal{R}, \gamma)$.
+The state vector at slot $t$ is:
+\begin{equation}
+  s_t = \left(\rho_t,\; q_t,\; \mathrm{CQI}_t,\; b_t,\; \tau_t\right),
+  \label{eq:state}
+\end{equation}
+where $\rho_t \in [0,1]$ is the EWMA traffic load, $q_t$ is the
+normalised RLC buffer occupancy, $\mathrm{CQI}_t \in \{1,\ldots,15\}$
+is the channel quality indicator, $b_t \in \{0,1\}$ is the current BWP
+mode, and $\tau_t$ is the idle timer (slots since last packet).
+The total discrete state space size is
+$|\mathcal{S}| = 10 \times 8 \times 15 \times 2 \times 6 = 14{,}400$.
+
+\subsection{Action Space}
+
+The joint action is a tuple:
+\begin{equation}
+  a_t = \left(b_{t+1},\; \theta_t^{\mathrm{WUR}},\; p_t^{\mathrm{SSB}}\right)
+        \in \{0,1\} \times \{1,2,3\} \times \{5,10,20,40\},
+  \label{eq:action}
+\end{equation}
+giving $|\mathcal{A}| = 2 \times 3 \times 4 = 24$ discrete actions.
+A switching cost $\mu_s = 0.05$ is included in the reward to prevent
+rapid BWP toggling (chattering).
+
+\subsection{Reward Function}
+
+The reward at slot $t$ is:
+\begin{equation}
+  r_t = w_p \cdot r_t^{\mathrm{save}}
+      + w_q \cdot r_t^{\mathrm{tput}}
+      - w_b \cdot r_t^{\mathrm{buf}}
+      - w_\ell \cdot r_t^{\mathrm{lat}}
+      - \mu_s \cdot \mathbb{1}[b_{t+1} \neq b_t],
+  \label{eq:reward}
+\end{equation}
+where all terms are normalised to $[0,1]$.
+
+The \textbf{power-saving reward}:
+\begin{equation}
+  r_t^{\mathrm{save}} = \frac{P_{\mathrm{ref}} - P_{\mathrm{UE}}(t)}{P_{\mathrm{ref}}},
+  \quad P_{\mathrm{ref}} = 975\;\mathrm{mW},
+  \label{eq:r_save}
+\end{equation}
+rewards the agent for reducing power relative to the always-on baseline.
+
+The \textbf{throughput reward}:
+\begin{equation}
+  r_t^{\mathrm{tput}} =
+  \begin{cases}
+    \min\!\left(R_t / \lambda_t,\, 1\right) & \lambda_t > 0.5\;\mathrm{Mbps} \\
+    1 & \text{otherwise (idle)}
+  \end{cases}
+  \label{eq:r_tput}
+\end{equation}
+rewards serving the offered load when traffic is present.
+
+The \textbf{buffer penalty}:
+\begin{equation}
+  r_t^{\mathrm{buf}} = \min\!\left(q_t / q_{\mathrm{sat}},\, 1\right),
+  \quad q_{\mathrm{sat}} = 0.1\;\mathrm{MB},
+  \label{eq:r_buf}
+\end{equation}
+penalises buffer build-up, creating a strong gradient toward wake-up
+during traffic bursts. This is the key term that prevents the
+over-sleeping failure mode.
+
+The \textbf{latency penalty}:
+\begin{equation}
+  r_t^{\mathrm{lat}} = \min\!\left(D_t / (2 D_{\mathrm{max}}),\, 1\right),
+  \quad D_{\mathrm{max}} = 10\;\mathrm{ms},
+  \label{eq:r_lat}
+\end{equation}
+applies a soft barrier around the 6G URLLC latency target.
+
+The weight vector $(w_p, w_q, w_b, w_\ell) = (0.35, 0.35, 0.55, 0.20)$
+is tuned so that the expected reward under deep-sleep-when-idle
+behaviour ($\approx 0.56$) exceeds the always-on reward ($\approx 0.35$),
+while sleeping during active traffic incurs a net negative reward
+($\approx -0.20$), forcing the agent to learn traffic-responsive
+wake-up behaviour.
+
+%% ========================= V. ALGORITHM =================================== %%
+\section{Dueling DQN with Prioritised Replay}
+\label{sec:algo}
+
+\subsection{Network Architecture}
+
+We employ a Dueling DQN~\cite{wang2016dueling} that factorises the
+action-value function as:
+\begin{equation}
+  Q(s,a;\theta) = V(s;\theta_V)
+    + \left(A(s,a;\theta_A)
+      - \frac{1}{|\mathcal{A}|}\sum_{a'}A(s,a';\theta_A)\right),
+  \label{eq:dueling}
+\end{equation}
+separating the state value $V(s)$ from the action advantage $A(s,a)$.
+This decomposition accelerates convergence in idle states where most
+actions have similar value, allowing the value stream to update from
+all transitions regardless of which action was taken.
+
+The network architecture is:
+\begin{equation*}
+  \mathbb{R}^5 \xrightarrow{\mathrm{FC}_{64},\,\mathrm{ReLU}}
+  \mathbb{R}^{64} \xrightarrow{\mathrm{FC}_{64},\,\mathrm{ReLU}}
+  \mathbb{R}^{64} \xrightarrow{\mathrm{split}}
+  \begin{cases} V: \mathbb{R}^1 \\ A: \mathbb{R}^{24} \end{cases}
+\end{equation*}
+with 5,953 total parameters — well within UE on-device inference budgets,
+requiring $<$0.1~mW of additional power at a 1~kHz decision rate.
+
+\subsection{Prioritised Experience Replay}
+
+We use Prioritised Experience Replay (PER)~\cite{schaul2016per} to
+oversample high-TD-error transitions, which in our setting correspond
+to BWP switching decisions at traffic burst boundaries.
+The sampling probability for transition $i$ is:
+\begin{equation}
+  P(i) = \frac{(\delta_i + \varepsilon)^\alpha}
+              {\sum_j (\delta_j + \varepsilon)^\alpha},
+  \quad \alpha = 0.6,\; \varepsilon = 0.01,
+  \label{eq:per}
+\end{equation}
+with importance sampling correction weight
+$w_i \propto (N \cdot P(i))^{-\beta}$, $\beta$ annealed from 0.4 to 1.0.
+
+\subsection{Training Configuration}
+
+The agent is trained for 500,000 steps using the Adam optimiser with
+learning rate $3 \times 10^{-4}$, batch size 256, and replay buffer
+capacity 100,000.
+The target network is updated via soft copy with $\tau = 0.005$.
+Exploration follows an $\epsilon$-greedy schedule decaying from 1.0 to
+0.05 over the first 10\% of training steps.
+Table~\ref{tab:hyperparams} summarises the complete hyperparameter set.
+
+\begin{table}[t]
+  \centering
+  \caption{Hyperparameter Configuration}
+  \label{tab:hyperparams}
+  \begin{tabular}{lc}
+    \toprule
+    Hyperparameter & Value \\
+    \midrule
+    Discount factor $\gamma$    & 0.99 \\
+    Learning rate               & $3 \times 10^{-4}$ \\
+    Batch size                  & 256 \\
+    Replay buffer size          & 100,000 \\
+    Soft update rate $\tau$     & 0.005 \\
+    PER exponent $\alpha$       & 0.6 \\
+    PER IS exponent $\beta$     & 0.4 $\to$ 1.0 \\
+    Hidden units (each layer)   & 64 \\
+    Training steps              & 500,000 \\
+    Slot duration $\Delta T$    & 1~ms \\
+    $w_p / w_q / w_b / w_\ell$ & 0.35/0.35/0.55/0.20 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+%% ========================= VI. RESULTS ==================================== %%
+\section{Simulation Results}
+\label{sec:results}
+
+\subsection{Simulation Setup}
+
+We evaluate the proposed agent against four baseline policies:
+\textbf{Always-on} ($b=1$, $\theta=1$, $T_{\mathrm{SSB}}=5$~ms),
+\textbf{3GPP DRX} (Rel-18 DRX state machine with $T_{\mathrm{inact}}=100$~ms,
+$T_{\mathrm{DRX}}=40$~ms), \textbf{Random} (uniform over $\mathcal{A}$),
+and a \textbf{Value Iteration Oracle} (offline, requires future traffic knowledge).
+Each policy is evaluated over 20 episodes of 5,000 slots (5 seconds)
+at three UE velocities: $v \in \{3, 10, 60\}$~km/h.
+All simulations use a fixed gNB transmit power of 43~dBm,
+UE-gNB distance of 200~m, and the hardware profile in Table~\ref{tab:hw}.
+
+\begin{table}[t]
+  \centering
+  \caption{UE Hardware Profile (3GPP TR 38.840)}
+  \label{tab:hw}
+  \begin{tabular}{lcc}
+    \toprule
+    Component & Full BW & BWP-lite \\
+    \midrule
+    PA power              & 520 mW & 83 mW \\
+    Baseband              & 180 mW & 66 mW \\
+    RF chains (4T)        & 208 mW & 52 mW \\
+    WUR                   & 2 mW   & 0.1 mW (sleep) \\
+    Static                & \multicolumn{2}{c}{65 mW} \\
+    \midrule
+    \textbf{Total (approx.)} & \textbf{975 mW} & \textbf{$\sim$200 mW} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Main Results}
+
+Table~\ref{tab:main_results} presents the key performance metrics
+averaged across 20 evaluation episodes for $v = 10$~km/h.
+
+\begin{table}[t]
+  \centering
+  \caption{Performance Comparison ($v = 10$~km/h, 20 episodes)}
+  \label{tab:main_results}
+  \begin{tabular}{lcccc}
+    \toprule
+    Policy & Power (mW) & PwrSave\% & TputEff\% & Viol\% \\
+    \midrule
+    \textbf{DQN (ours)} & \textbf{240.7} & \textbf{75.3} & 94.3 & \textbf{0.1} \\
+    3GPP DRX            & 420.6          & 56.9          & \textbf{99.6} & 0.0 \\
+    Always-on           & 976.5          & $-$0.1        & 99.6 & 0.0 \\
+    Random              & 578.6          & 40.7          & 89.8 & 2.1 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The proposed DQN agent achieves 75.3\% power saving relative to always-on
+operation — an \textbf{18.4 percentage-point improvement} over the 3GPP
+DRX baseline — while maintaining 94.3\% throughput efficiency and a
+near-zero latency violation rate of 0.1\%.
+The DRX baseline, despite its structured power management, shows
+power consumption 74.5\% higher than the DQN agent at comparable QoS.
+The random policy confirms that the problem is non-trivial:
+uniform action selection reduces power by only 40.7\% with 2.1\%
+latency violations, significantly worse than the learned policy.
+
+\subsection{Effect of UE Velocity}
+
+Fig.~\ref{fig:velocity} shows the power saving and throughput efficiency
+across the three velocity scenarios.
+
+\begin{figure}[t]
+  \centering
+  % Replace with actual figure:
+  % \includegraphics[width=\columnwidth]{figures/velocity_comparison.pdf}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{2cm}
+    [Fig. 1: Power saving \% and throughput efficiency \% \\
+    vs. UE velocity for DQN and DRX baselines]\vspace{2cm}}}
+  \caption{Power saving and throughput efficiency vs. UE velocity.
+           DQN consistently outperforms DRX on power saving across all
+           scenarios, with degradation at $v = 60$~km/h due to
+           fast channel variation.}
+  \label{fig:velocity}
+\end{figure}
+
+At $v = 3$~km/h (pedestrian), the agent achieves 76.3\% power saving
+with 89.9\% throughput efficiency, the best trade-off across scenarios.
+At $v = 10$~km/h (urban mobile), results are similar (75.3\%, 94.3\%).
+At $v = 60$~km/h (vehicular), power saving improves to 79.4\% but
+throughput efficiency drops to 80.0\% with 9.5\% latency violations,
+as rapid channel variation (coherence time 2.2~ms) makes CQI-based
+wake decisions stale before they can be acted upon.
+This identifies fast-fading robustness as a direction for future work,
+potentially addressed by including velocity as an explicit state variable
+or by using model-predictive RL approaches.
+
+\subsection{Training Convergence}
+
+Fig.~\ref{fig:convergence} shows the episode EE reward during training
+for $v = 10$~km/h.
+
+\begin{figure}[t]
+  \centering
+  % Replace with actual figure:
+  % \includegraphics[width=\columnwidth]{figures/fig2_ee_convergence.pdf}
+  \fbox{\parbox{0.9\columnwidth}{\centering\vspace{2cm}
+    [Fig. 2: Training convergence — episode reward vs. steps]\vspace{2cm}}}
+  \caption{Training convergence of the Dueling DQN agent.
+           The agent reliably surpasses the 3GPP DRX reward level
+           (dashed line) after approximately 150,000 steps.}
+  \label{fig:convergence}
+\end{figure}
+
+The agent surpasses the DRX reward baseline after approximately 150,000
+training steps and converges by 350,000 steps, demonstrating stable
+learning without oscillation.
+
+\subsection{Action Distribution Analysis}
+
+Post-training analysis of the learned policy reveals three distinct
+behavioural modes:
+(i)~\textbf{Deep idle} ($\rho < 0.1$, $\tau > 100$~ms): agent selects
+BWP-lite with $\theta = 3$ and $T_{\mathrm{SSB}} = 40$~ms 87\% of the time;
+(ii)~\textbf{Active traffic} ($\rho > 0.5$): agent switches to full-BW
+within 2--3 slots of traffic onset, enabled by the buffer penalty gradient;
+(iii)~\textbf{Transition} ($0.1 \leq \rho \leq 0.5$): agent uses BWP-lite
+with $\theta = 1$ (low miss-detection risk) and $T_{\mathrm{SSB}} = 10$~ms,
+maintaining rapid wake-up capability while preserving partial power saving.
+This three-mode behaviour is precisely the adaptive strategy that
+rule-based DRX cannot achieve with fixed timers.
+
+%% ========================= VII. CONCLUSION ================================ %%
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a Dueling DQN agent for joint optimisation of three
+6G NR UE power-saving primitives: BWP-lite mode, WUR detection threshold,
+and SSB periodicity.
+The agent is trained in a 3GPP-compliant simulation environment with a
+UMa channel model, calibrated bursty MMPP-2 traffic, and a component-level
+UE power model traceable to TR 38.840.
+A key contribution is the integration of a statistical WUR energy detector
+model directly into the RL reward, enabling the agent to learn
+threshold-selection policies that adapt to instantaneous channel quality.
+
+Experimental results show 75--76\% power saving relative to always-on
+operation under pedestrian and urban mobility, representing an 18--19
+percentage-point improvement over the 3GPP Rel-18 DRX baseline,
+with throughput efficiency of 90--94\% and $<$1\% latency violations.
+The lightweight network (5,953 parameters) is feasible for on-device
+inference at $<$0.1~mW additional power, supporting deployment on
+6G NR UE silicon.
+
+Future work will extend the framework to multi-cell scenarios with
+inter-cell interference, incorporate UE velocity as an explicit state
+variable for vehicular robustness, and explore the connection to
+3GPP Rel-21 AI/ML-native RAN proposals for standardisation.
+
+%% ========================= ACKNOWLEDGMENT ================================= %%
+% \section*{Acknowledgment}
+% \TODO{Add if needed.}
+
+%% ========================= REFERENCES ==================================== %%
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+%% --- Inline bibliography (remove if using .bib file) --- %%
+\begin{thebibliography}{99}
+
+\bibitem{itu_imt2030}
+ITU-R, ``Framework and overall objectives of the future development of
+IMT for 2030 and beyond,'' Recommendation ITU-R M.2160-0, Nov. 2023.
+
+\bibitem{3gpp_6g_workshop}
+3GPP, ``Summary of 3GPP workshop on IMT-2030 (6G),''
+3GPP RWS-230069, Jun. 2023.
+
+\bibitem{qualcomm_6g_proposals}
+Qualcomm Technologies Inc., ``6G Proposals for Connectivity,''
+presented at IEEE ICC, Jun. 2026.
+
+\bibitem{3gpp_tr38875}
+3GPP, ``Study on NR wake up signal and wake up receiver (WUR),''
+Technical Report 38.875, Release 17, 2022.
+
+\bibitem{3gpp_ts38300}
+3GPP, ``NR; NR and NG-RAN overall description,''
+Technical Specification 38.300, Release 18, 2024.
+
+\bibitem{3gpp_rel18_ps}
+3GPP, ``Study on further UE power saving enhancements for NR,''
+Technical Report 38.840, Release 18, 2024.
+
+\bibitem{comsa2020}
+I.-A. Com\c{s}a, R. Trestian, G.-M. Muntean, and G. Ghinea,
+``5MART: A 5G smart scheduling framework for optimizing QoS
+through reinforcement learning,''
+\emph{IEEE Trans. Netw. Serv. Manag.}, vol.~17, no.~2,
+pp.~1110--1124, Jun. 2020.
+
+\bibitem{cui2022}
+Y. Cui, S. Wang, and H. Liu,
+``Deep reinforcement learning for bandwidth part switching in 5G NR,''
+in \emph{Proc. IEEE WCNC}, Austin, TX, Apr. 2022.
+
+\bibitem{zhang2023}
+X. Zhang, H. Zhang, and L. Hanzo,
+``Deep reinforcement learning for base station sleep mode scheduling
+in heterogeneous networks,''
+\emph{IEEE Trans. Veh. Technol.}, vol.~72, no.~4,
+pp.~5231--5245, Apr. 2023.
+
+\bibitem{lee2024}
+J. Lee, S. Park, and I. Chung,
+``Actor-critic energy management for 5G NR gNB with traffic prediction,''
+in \emph{Proc. IEEE ICC}, Denver, CO, Jun. 2024.
+
+\bibitem{wang2016dueling}
+Z. Wang, T. Schaul, M. Hessel, H. van Hasselt, M. Lanctot, and N. de Freitas,
+``Dueling network architectures for deep reinforcement learning,''
+in \emph{Proc. ICML}, New York, NY, Jun. 2016, pp.~1995--2003.
+
+\bibitem{schaul2016per}
+T. Schaul, J. Quan, I. Antonoglou, and D. Silver,
+``Prioritized experience replay,''
+in \emph{Proc. ICLR}, San Juan, Puerto Rico, May 2016.
+
+\end{thebibliography}
+
+\end{document}
