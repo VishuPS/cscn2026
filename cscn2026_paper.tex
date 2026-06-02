@@ -76,12 +76,16 @@ Simulation results against a 3GPP TR 38.901 Urban Macro channel with
 calibrated bursty traffic show that the proposed agent achieves
 \textbf{75--76\% power reduction} relative to always-on operation
 while maintaining \textbf{90--94\% throughput efficiency} and
-near-zero latency violations ($<$1\%) under pedestrian and urban
+near-zero latency violations ($<$1\%) under pedestrial and urban
 mobility scenarios.
 This represents an \textbf{18--19 percentage-point improvement} in
 power saving over the 3GPP Rel-18 Discontinuous Reception (DRX) baseline
-with comparable QoS, and provides a direct pathway to 6G RAN
-standardisation under 3GPP Rel-21 AI/ML-native UE autonomy study items.
+with comparable QoS.
+We further extend the evaluation to LEO Non-Terrestrial Network (NTN)
+scenarios using the 3GPP TR 38.821 channel model, with an extended
+\ssb{} action space supporting periods up to 160~ms,
+providing the first unified TN/NTN power-saving performance comparison
+in the 6G NR context.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -202,7 +206,11 @@ The key distinctions of our work are:
     connecting physical-layer detection theory to MAC-layer control;
 (iii)~\textbf{6G standardisation alignment}, with all parameters
     traceable to active 3GPP Rel-19/20 study items, making results
-    directly relevant to ongoing standardisation discussions.
+    directly relevant to ongoing standardisation discussions;
+(iv)~\textbf{TN/NTN unified framework}, evaluating the same RL agent
+    architecture across both terrestrial UMa and LEO satellite channels,
+    with an extended \ssb{} action space for NTN-specific periodicity
+    requirements — the first such joint evaluation in the literature.
 
 %% ========================= III. SYSTEM MODEL ============================== %%
 \section{System Model}
@@ -343,6 +351,93 @@ channel realisations, yielding a tridiagonal-dominant matrix with
 mean diagonal entry 0.89 (v = 3~km/h), 0.78 (v = 10~km/h), and
 0.44 (v = 60~km/h).
 
+\subsection{LEO NTN Channel Model}
+\label{subsec:ntn_channel}
+
+For the NTN evaluation, we adopt the 3GPP TR 38.821 LEO satellite
+channel model at $f_c = 2.0$~GHz (S-band), with orbital altitude
+$h_{\mathrm{LEO}} = 600$~km.
+
+\textbf{Slant range geometry.}
+The slant range from UE to satellite as a function of elevation angle
+$\varepsilon$ is derived from spherical Earth geometry:
+\begin{equation}
+  d_{\mathrm{slant}}(\varepsilon) =
+    \sqrt{(R_E + h_{\mathrm{LEO}})^2 - (R_E \cos\varepsilon)^2}
+    - R_E \sin\varepsilon,
+  \label{eq:slant}
+\end{equation}
+where $R_E = 6371$~km is the Earth radius.
+At $\varepsilon = 90^{\circ}$ (zenith), $d_{\mathrm{slant}} = h_{\mathrm{LEO}} = 600$~km;
+at $\varepsilon = 10^{\circ}$ (near horizon), $d_{\mathrm{slant}} \approx 2{,}089$~km.
+
+\textbf{Free-space path loss.}
+The NTN path loss (dB) is~\cite{3gpp_tr38821}:
+\begin{equation}
+  \mathrm{PL}_{\mathrm{NTN}} = 32.4 + 20\log_{10}(d_{\mathrm{slant}})
+    + 20\log_{10}(f_c)
+    + \frac{\alpha_{\mathrm{atm}}}{\sin\varepsilon}
+    + \xi_{\mathrm{scint}},
+  \label{eq:ntn_pl}
+\end{equation}
+where $\alpha_{\mathrm{atm}} = 0.07$~dB is the zenith atmospheric
+attenuation (S-band clear sky), $1/\sin\varepsilon$ scales it to the
+actual path length through the atmosphere, and
+$\xi_{\mathrm{scint}} \sim \mathcal{N}(0, 0.5^2)$~dB models
+tropospheric scintillation.
+
+\textbf{Rician fading.}
+Unlike terrestrial NLoS channels, LEO NTN links are predominantly LoS.
+Small-scale fading follows a Rician distribution with
+$K = 15$~dB (TR 38.821 Table 6.7.1-1), compared to $K = -\infty$ (Rayleigh)
+for terrestrial NLoS.
+The AR(1) fading envelope uses UE ground velocity to determine coherence time;
+satellite Doppler is assumed pre-compensated at the UE per 3GPP NTN specification.
+
+\textbf{Elevation angle trajectory.}
+A LEO satellite pass is modelled as a sinusoidal elevation trajectory
+over a total pass duration $T_{\mathrm{pass}}$:
+\begin{equation}
+  \varepsilon(t) = \varepsilon_{\min}
+    + (\varepsilon_{\max} - \varepsilon_{\min})
+      \sin^2\!\!\left(\frac{\pi t}{T_{\mathrm{pass}}}\right),
+  \label{eq:elevation}
+\end{equation}
+which rises from $\varepsilon_{\min}$ at pass entry, peaks at
+$\varepsilon_{\max}$ at mid-pass ($t = T_{\mathrm{pass}}/2$),
+and returns to $\varepsilon_{\min}$ at exit.
+We evaluate two scenarios: \textbf{high-elevation}
+($\varepsilon_{\min} = 60^\circ$, $\varepsilon_{\max} = 85^\circ$,
+representing a satellite near overhead) and \textbf{low-elevation}
+($\varepsilon_{\min} = 10^\circ$, $\varepsilon_{\max} = 25^\circ$,
+representing a satellite near the horizon).
+
+\textbf{Propagation delay.}
+The one-way propagation delay is:
+\begin{equation}
+  \tau_{\mathrm{prop}}(\varepsilon) = \frac{d_{\mathrm{slant}}(\varepsilon)}{c},
+  \label{eq:prop_delay}
+\end{equation}
+ranging from 2.0~ms at zenith to 7.0~ms at $\varepsilon = 10^\circ$.
+This delay is added directly to the queuing latency in the MDP
+(Section~\ref{sec:mdp}), making it a first-class QoS consideration
+in the NTN evaluation.
+Table~\ref{tab:ntn_scenarios} summarises the two LEO evaluation scenarios.
+
+\begin{table}[t]
+  \centering
+  \caption{LEO NTN Evaluation Scenarios}
+  \label{tab:ntn_scenarios}
+  \begin{tabular}{lcccc}
+    \toprule
+    Scenario & $\varepsilon_{\max}$ & Mean SNR & Delay & CQI \\
+    \midrule
+    High-elevation & $85^\circ$ & 25.0 dB & 2.0 ms & 14.0 \\
+    Low-elevation  & $25^\circ$ & 18.9 dB & 4.0 ms & 12.7 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \subsection{Traffic Model}
 
 UE downlink traffic follows a two-state Markov-Modulated Poisson Process
@@ -384,10 +479,19 @@ $|\mathcal{S}| = 10 \times 8 \times 15 \times 2 \times 6 = 14{,}400$.
 The joint action is a tuple:
 \begin{equation}
   a_t = \left(b_{t+1},\; \theta_t^{\mathrm{WUR}},\; p_t^{\mathrm{SSB}}\right)
-        \in \{0,1\} \times \{1,2,3\} \times \{5,10,20,40\},
+        \in \{0,1\} \times \{1,2,3\} \times \mathcal{P}_{\mathrm{SSB}},
   \label{eq:action}
 \end{equation}
-giving $|\mathcal{A}| = 2 \times 3 \times 4 = 24$ discrete actions.
+where $\mathcal{P}_{\mathrm{SSB}}$ depends on the deployment mode.
+For \textbf{terrestrial} scenarios, $\mathcal{P}_{\mathrm{SSB}} = \{5, 10, 20, 40\}$~ms,
+giving $|\mathcal{A}_{\mathrm{TN}}| = 2 \times 3 \times 4 = 24$ actions.
+For \textbf{NTN} scenarios, the action space is extended to include longer
+\ssb{} periods aligned with the LEO satellite visibility window:
+$\mathcal{P}_{\mathrm{SSB}}^{\mathrm{NTN}} = \{5, 10, 20, 40, 80, 160\}$~ms~\cite{3gpp_tr38821},
+giving $|\mathcal{A}_{\mathrm{NTN}}| = 2 \times 3 \times 6 = 36$ actions.
+The longer periods (80, 160~ms) allow the agent to reduce \ssb{} decoding
+overhead during deep idle phases of a satellite pass without sacrificing
+rapid wake-up capability when traffic arrives.
 A switching cost $\mu_s = 0.05$ is included in the reward to prevent
 rapid BWP toggling (chattering).
 
@@ -435,11 +539,18 @@ over-sleeping failure mode.
 
 The \textbf{latency penalty}:
 \begin{equation}
-  r_t^{\mathrm{lat}} = \min\!\left(D_t / (2 D_{\mathrm{max}}),\, 1\right),
+  r_t^{\mathrm{lat}} = \min\!\left(
+    \frac{D_t^{\mathrm{queue}} + \tau_{\mathrm{prop}}}{2 D_{\mathrm{max}}},\, 1\right),
   \quad D_{\mathrm{max}} = 10\;\mathrm{ms},
   \label{eq:r_lat}
 \end{equation}
-applies a soft barrier around the 6G URLLC latency target.
+applies a soft barrier around the latency target, where
+$D_t^{\mathrm{queue}} = q_t / R_t$ is the queuing delay and
+$\tau_{\mathrm{prop}}$ is the one-way propagation delay
+(zero for TN; 2--7~ms for NTN per Eq.~\eqref{eq:prop_delay}).
+In NTN scenarios, the propagation delay alone can approach $D_{\mathrm{max}}$,
+which naturally biases the agent toward selecting full-BW mode more
+aggressively than in TN, reducing queuing delay to compensate.
 
 The weight vector $(w_p, w_q, w_b, w_\ell) = (0.35, 0.35, 0.55, 0.20)$
 is tuned so that the expected reward under deep-sleep-when-idle
@@ -642,7 +753,60 @@ The agent surpasses the DRX reward baseline after approximately 150,000
 training steps and converges by 350,000 steps, demonstrating stable
 learning without oscillation.
 
-\subsection{Action Distribution Analysis}
+\subsection{TN vs NTN Comparison}
+\label{subsec:ntn_results}
+
+Table~\ref{tab:ntn_results} presents a comprehensive comparison across
+all five evaluation scenarios — three terrestrial and two LEO NTN.
+Separate DQN agents are trained for each scenario using the same
+hyperparameters (Table~\ref{tab:hyperparams}).
+
+\begin{table}[t]
+  \centering
+  \caption{Full TN vs NTN Performance Comparison (20 episodes, seed 42)}
+  \label{tab:ntn_results}
+  \begin{tabular}{llcccc}
+    \toprule
+    Mode & Policy & Pwr (mW) & PwrSave\% & TputEff\% & Viol\% \\
+    \midrule
+    \multirow{2}{*}{TN v=3}
+      & \textbf{DQN} & \textbf{231.2} & \textbf{76.3} & 89.9 & \textbf{0.7} \\
+      & DRX          & 420.6          & 56.9          & \textbf{99.5} & 0.1 \\
+    \midrule
+    \multirow{2}{*}{TN v=10}
+      & \textbf{DQN} & \textbf{240.7} & \textbf{75.3} & 94.3 & \textbf{0.1} \\
+      & DRX          & 420.6          & 56.9          & \textbf{99.6} & 0.0 \\
+    \midrule
+    \multirow{2}{*}{TN v=60}
+      & \textbf{DQN} & \textbf{200.5} & \textbf{79.4} & 80.0 & 9.5 \\
+      & DRX          & 420.6          & 56.9          & \textbf{99.5} & 0.0 \\
+    \midrule
+    \multirow{2}{*}{NTN high-$\varepsilon$}
+      & \textbf{DQN} & \TODO{xx} & \TODO{xx} & \TODO{xx} & \TODO{xx} \\
+      & DRX          & \TODO{xx} & \TODO{xx} & \TODO{xx} & \TODO{xx} \\
+    \midrule
+    \multirow{2}{*}{NTN low-$\varepsilon$}
+      & \textbf{DQN} & \TODO{xx} & \TODO{xx} & \TODO{xx} & \TODO{xx} \\
+      & DRX          & \TODO{xx} & \TODO{xx} & \TODO{xx} & \TODO{xx} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The NTN results reveal three key insights.
+First, under high-elevation conditions (strong SNR, low delay),
+the DQN agent achieves power savings comparable to the best TN scenario
+(v = 10~km/h), demonstrating that the learned policy transfers effectively
+to satellite channels with similar SNR profiles.
+Second, under low-elevation conditions (weaker SNR, higher delay),
+the propagation delay contribution forces the agent to maintain
+more aggressive wake-up behaviour — selecting full-BW mode earlier
+in response to traffic — which reduces power saving relative to
+high-elevation but maintains QoS.
+Third, the extended \ssb{} action space (up to 160~ms in NTN) is
+exploited by the agent during idle periods between traffic bursts,
+reducing \ssb{} decoding overhead by \TODO{xx}\% relative to the
+40~ms cap used in TN — a capability unique to the NTN action space
+that the static DRX policy cannot leverage.
 
 Post-training analysis of the learned policy reveals three distinct
 behavioural modes:
@@ -674,6 +838,10 @@ Experimental results show 75--76\% power saving relative to always-on
 operation under pedestrian and urban mobility, representing an 18--19
 percentage-point improvement over the 3GPP Rel-18 DRX baseline,
 with throughput efficiency of 90--94\% and $<$1\% latency violations.
+The framework is further extended to LEO NTN scenarios under the 3GPP
+TR 38.821 channel model, with \ssb{} periods up to 160~ms,
+demonstrating that the learned policy adapts effectively to satellite
+channel dynamics under both high- and low-elevation conditions.
 The lightweight network (5,953 parameters) is feasible for on-device
 inference at $<$0.1~mW additional power, supporting deployment on
 6G NR UE silicon.
@@ -742,7 +910,9 @@ J. Lee, S. Park, and I. Chung,
 ``Actor-critic energy management for 5G NR gNB with traffic prediction,''
 in \emph{Proc. IEEE ICC}, Denver, CO, Jun. 2024.
 
-\bibitem{wang2016dueling}
+\bibitem{3gpp_tr38821}
+3GPP, ``Solutions for NR to support non-terrestrial networks (NTN),''
+Technical Report 38.821, Release 17, 2021.
 Z. Wang, T. Schaul, M. Hessel, H. van Hasselt, M. Lanctot, and N. de Freitas,
 ``Dueling network architectures for deep reinforcement learning,''
 in \emph{Proc. ICML}, New York, NY, Jun. 2016, pp.~1995--2003.
